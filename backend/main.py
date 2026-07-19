@@ -121,3 +121,29 @@ async def health_check():
     Bisa dipakai untuk monitoring atau ping awal dari frontend.
     """
     return {"status": "Server AI Berjalan Optimal!"}
+
+# Skema Data untuk Memasukkan Dokumen
+class IngestRequest(BaseModel):
+    text: str
+    metadata: dict = {}
+
+# Endpoint Baru untuk Memasukkan Dokumen ke Database (RAG)
+@app.post("/api/rag/ingest")
+async def ingest_document(request: IngestRequest):
+    try:
+        # Membuat ID unik untuk setiap dokumen
+        doc_id = str(uuid.uuid4())
+
+        # Memasukkan teks ke dalam ChromaDB
+        collection.add(
+            documents=[request.text],
+            metadatas=[request.metadata],
+            ids=[doc_id]
+        )
+        return {
+            "status": "success", 
+            "message": "Dokumen berhasil disimpan ke Knowledge Base",
+            "doc_id": doc_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
