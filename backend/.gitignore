@@ -1,0 +1,22 @@
+# Mengabaikan Environment
+env/
+venv/
+ENV/
+
+# Mengabaikan Kredensial & Variabel Lokal
+.env
+.env.local
+.env.*.local
+
+# Mengabaikan File Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Mengabaikan Folder Database Lokal
+*.db
+*.sqlite3
+chroma_db/
+
+# MacOS junk files (Opsional tapi berguna)
+.DS_Store

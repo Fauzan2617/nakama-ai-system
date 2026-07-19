@@ -1,0 +1,6 @@
+fastapi==0.110.0        # Framework web modern berbasis Python untuk bikin REST API — cepat, async-ready, dan auto-generate docs (Swagger/ReDoc)
+uvicorn==0.27.1         # ASGI server untuk menjalankan aplikasi FastAPI — semacam "mesin" yang nge-serve app kamu di port tertentu
+google-generativeai==0.4.1  # SDK resmi Google untuk akses Gemini API (generative AI) — buat kirim prompt dan terima respons dari model Gemini
+python-dotenv==1.0.1    # Baca file .env dan load variabel lingkungan ke os.environ — biasa dipake buat nyimpen API key biar nggak hardcode
+pydantic==2.6.3         # Library validasi data berbasis type hint Python — FastAPI pakai ini di balik layar buat validasi request body & response schema
+python-multipart==0.0.9 # Parsing form data & file upload di FastAPI — wajib ada kalau endpoint kamu nerima multipart/form-data (misal upload file/gambar)
