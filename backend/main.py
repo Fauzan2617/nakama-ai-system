@@ -1,67 +1,96 @@
 import os
+import uuid  # Untuk generate ID unik saat menyimpan dokumen ke ChromaDB
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import google.generativeai as genai
 
+# --- IMPORT CHROMADB ---
+import chromadb
+# Documents  → tipe data list of string yang akan di-embed
+# EmbeddingFunction → base class yang harus di-inherit untuk custom embedding
+# Embeddings → tipe data hasil vektor (list of list of float)
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+
 # ============================================================
 # KONFIGURASI ENVIRONMENT & API KEY
 # ============================================================
 
-# Membaca file .env dan memuat variabel ke os.environ
 load_dotenv()
-
-# Mengambil API key Gemini dari environment variable
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Validasi awal — hentikan server jika API key tidak ditemukan
 if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY tidak ditemukan. Pastikan file .env sudah diisi.")
+    raise ValueError("GEMINI_API_KEY tidak ditemukan.")
 
 # ============================================================
-# INISIALISASI MODEL AI (GEMINI)
+# INISIALISASI MODEL GEMINI
 # ============================================================
 
-# Menghubungkan SDK Google Generative AI dengan API key yang sudah dimuat
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Memilih model Gemini yang akan digunakan sebagai AI engine
-# gemini-1.5-flash → versi cepat dan ringan, cocok untuk chat real-time
+# Model untuk generate teks / menjawab pertanyaan user
 model = genai.GenerativeModel('gemini-1.5-flash')
+
+# ============================================================
+# SETUP CHROMADB & CUSTOM EMBEDDING FUNCTION
+# ============================================================
+
+class GeminiEmbeddingFunction(EmbeddingFunction):
+    """
+    Custom embedding function yang menghubungkan ChromaDB dengan Gemini.
+    ChromaDB butuh fungsi ini untuk mengubah teks menjadi vektor angka
+    sebelum disimpan atau dicari di database.
+    """
+
+    def __call__(self, input: Documents) -> Embeddings:
+        # Memanggil Gemini Embedding API untuk mengubah teks jadi vektor
+        # model "embedding-001" → model khusus untuk semantic embedding
+        # task_type="retrieval_document" → optimasi untuk penyimpanan dokumen
+        #   (gunakan "retrieval_query" saat melakukan pencarian/query)
+        response = genai.embed_content(
+            model="models/embedding-001",
+            content=input,
+            task_type="retrieval_document"
+        )
+        # response["embedding"] berisi list of list of float (vektor numerik)
+        return response["embedding"]
+
+# Membuat koneksi ke ChromaDB dengan mode persistent (data tersimpan ke disk)
+# path="./chroma_db" → folder penyimpanan database ada di dalam folder backend
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+
+# Mengambil collection yang sudah ada, atau membuat baru jika belum ada
+# Collection di ChromaDB = seperti "tabel" di database biasa
+# name="nakama_knowledge_base" → nama collection untuk knowledge base AI
+# embedding_function → pakai fungsi Gemini yang sudah dibuat di atas
+collection = chroma_client.get_or_create_collection(
+    name="nakama_knowledge_base",
+    embedding_function=GeminiEmbeddingFunction()
+)
 
 # ============================================================
 # INISIALISASI APLIKASI FASTAPI
 # ============================================================
 
-# Membuat instance aplikasi FastAPI dengan nama/title untuk dokumentasi Swagger
 app = FastAPI(title="Nakama AI Core System")
 
-# ============================================================
-# KONFIGURASI CORS (Cross-Origin Resource Sharing)
-# ============================================================
-
-# Mengizinkan frontend (browser) dari domain mana pun mengakses API ini
-# allow_origins=["*"]      → semua domain diizinkan (ubah ke domain spesifik di production)
-# allow_credentials=True   → mengizinkan pengiriman cookie/auth header lintas domain
-# allow_methods=["*"]      → semua HTTP method diizinkan (GET, POST, PUT, DELETE, dll)
-# allow_headers=["*"]      → semua request header diizinkan
+# Konfigurasi CORS agar frontend bisa mengakses API dari browser
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],       # Izinkan semua origin (ganti spesifik di production)
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],       # Izinkan semua HTTP method
+    allow_headers=["*"],       # Izinkan semua header
 )
 
 # ============================================================
-# SKEMA DATA (REQUEST BODY)
+# SKEMA DATA
 # ============================================================
 
-# Model Pydantic untuk validasi body request POST /api/chat
-# FastAPI akan otomatis return 422 jika field 'message' tidak ada atau bukan string
+# Validasi body request untuk endpoint chat
 class ChatRequest(BaseModel):
-    message: str  # Pesan teks yang dikirim user ke AI
+    message: str  # Pesan teks dari user
 
 # ============================================================
 # ENDPOINT: CHAT DENGAN AI
@@ -70,22 +99,15 @@ class ChatRequest(BaseModel):
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest):
     """
-    Menerima pesan dari user, meneruskannya ke Gemini AI,
-    lalu mengembalikan respons AI ke client.
+    Menerima pesan user → kirim ke Gemini → kembalikan respons.
+    (Tahap selanjutnya: integrasikan dengan ChromaDB untuk RAG —
+    cari konteks relevan dari knowledge base sebelum generate jawaban)
     """
     try:
-        # Kirim pesan user ke model Gemini dan tunggu responsnya
         response = model.generate_content(request.message)
-
-        # Kembalikan respons dalam format JSON terstruktur
-        return {
-            "status": "success",
-            "user_message": request.message,   # Echo balik pesan user
-            "ai_response": response.text        # Teks respons dari Gemini
-        }
+        return {"status": "success", "ai_response": response.text}
     except Exception as e:
-        # Jika terjadi error (misal: API key invalid, quota habis, dll),
-        # kembalikan HTTP 500 dengan detail errornya
+        # Tangkap semua error (quota habis, koneksi gagal, dll)
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================
@@ -95,7 +117,7 @@ async def chat_with_ai(request: ChatRequest):
 @app.get("/health")
 async def health_check():
     """
-    Endpoint sederhana untuk mengecek apakah server berjalan dengan baik.
-    Biasa dipakai oleh load balancer, monitoring tools, atau saat awal development.
+    Mengecek apakah server berjalan normal.
+    Bisa dipakai untuk monitoring atau ping awal dari frontend.
     """
     return {"status": "Server AI Berjalan Optimal!"}
