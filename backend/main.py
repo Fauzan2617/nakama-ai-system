@@ -147,3 +147,41 @@ async def ingest_document(request: IngestRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+# Endpoint Chat RAG (Membaca data internal)
+@app.post("/api/rag/chat")
+async def chat_with_rag(request: ChatRequest):
+    try:
+        # 1. Mencari dokumen paling relevan di ChromaDB (Top 2 hasil)
+        results = collection.query(
+            query_texts=[request.message],
+            n_results=2
+        )
+
+        # 2. Menggabungkan dokumen yang ditemukan menjadi satu konteks teks
+        retrieved_docs = results['documents'][0]
+        context = "\n\n".join(retrieved_docs) if retrieved_docs else "Tidak ada dokumen relevan."
+
+        # 3. Merakit Prompt (Instruksi sistem + Konteks + Pertanyaan User)
+        prompt = f"""
+        Kamu adalah Asisten AI Internal Nakama Creative Lab. 
+        Jawablah pertanyaan berikut HANYA berdasarkan konteks yang diberikan. 
+        Jika jawaban tidak ada di dalam konteks, bilang saja "Saya tidak menemukan informasi tersebut di dokumen internal".
+
+        KONTEKS DOKUMEN:
+        {context}
+
+        PERTANYAAN:
+        {request.message}
+        """
+
+        # 4. Meminta Gemini menjawab berdasarkan Prompt yang sudah diperkaya
+        response = model.generate_content(prompt)
+
+        return {
+            "status": "success",
+            "ai_response": response.text,
+            "retrieved_context": context # Ditampilkan agar kita tahu apa yang dibaca AI
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
