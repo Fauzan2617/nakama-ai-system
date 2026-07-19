@@ -3,14 +3,24 @@ import uuid
 import traceback
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
-
 from google import genai
+
+# ============================================================
+# DATABASE CONFIGURATION
+# ============================================================
+from database import engine, Base, get_db
+import models
+from models import ChatHistory
+
+# Perintah untuk membuat tabel di PostgreSQL jika belum ada
+models.Base.metadata.create_all(bind=engine)
 
 # ============================================================
 # LOAD ENV
@@ -36,24 +46,16 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 # CHROMADB EMBEDDING
 # ============================================================
 
-
 class GeminiEmbeddingFunction(EmbeddingFunction):
-
     def __call__(self, input: Documents) -> Embeddings:
-
         embeddings = []
-
         for text in input:
-
             response = client.models.embed_content(
                 model=EMBEDDING_MODEL,
                 contents=text
             )
-
             embeddings.append(response.embeddings[0].values)
-
         return embeddings
-
 
 # ============================================================
 # CHROMADB
@@ -87,15 +89,12 @@ app.add_middleware(
 # REQUEST
 # ============================================================
 
-
 class ChatRequest(BaseModel):
     message: str
-
 
 class IngestRequest(BaseModel):
     text: str
     metadata: dict = {}
-
 
 # ============================================================
 # HEALTH
@@ -103,12 +102,10 @@ class IngestRequest(BaseModel):
 
 @app.get("/health")
 async def health():
-
     return {
         "status": "success",
         "message": "Backend berjalan."
     }
-
 
 # ============================================================
 # LIST MODEL
@@ -116,25 +113,17 @@ async def health():
 
 @app.get("/models")
 async def models():
-
     try:
-
         result = []
-
         for model in client.models.list():
             result.append(model.name)
-
         return result
-
     except Exception as e:
-
         traceback.print_exc()
-
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
-
 
 # ============================================================
 # CHAT BIASA
@@ -142,28 +131,21 @@ async def models():
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-
     try:
-
         response = client.models.generate_content(
             model=CHAT_MODEL,
             contents=request.message
         )
-
         return {
             "status": "success",
             "response": response.text
         }
-
     except Exception as e:
-
         traceback.print_exc()
-
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
-
 
 # ============================================================
 # INGEST DOKUMEN
@@ -171,42 +153,32 @@ async def chat(request: ChatRequest):
 
 @app.post("/api/rag/ingest")
 async def ingest(request: IngestRequest):
-
     try:
-
         doc_id = str(uuid.uuid4())
-
         collection.add(
             ids=[doc_id],
             documents=[request.text],
             metadatas=[request.metadata]
         )
-
         return {
             "status": "success",
             "message": "Dokumen berhasil disimpan.",
             "doc_id": doc_id
         }
-
     except Exception as e:
-
         traceback.print_exc()
-
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
 
-
 # ============================================================
-# CHAT RAG
+# CHAT RAG (DENGAN POSTGRESQL MEMORY)
 # ============================================================
 
 @app.post("/api/rag/chat")
-async def rag_chat(request: ChatRequest):
-
+async def rag_chat(request: ChatRequest, db: Session = Depends(get_db)):
     try:
-
         results = collection.query(
             query_texts=[request.message],
             n_results=3
@@ -215,11 +187,8 @@ async def rag_chat(request: ChatRequest):
         documents = results.get("documents", [])
 
         if len(documents) == 0 or len(documents[0]) == 0:
-
             context = "Tidak ada dokumen relevan."
-
         else:
-
             context = "\n\n".join(documents[0])
 
         prompt = f"""
@@ -248,6 +217,17 @@ PERTANYAAN
             model=CHAT_MODEL,
             contents=prompt
         )
+        
+        # --- MENYIMPAN RIWAYAT KE POSTGRESQL ---
+        new_chat = ChatHistory(
+            session_id="test-session-001",
+            user_message=request.message,
+            ai_response=response.text
+        )
+        db.add(new_chat)
+        db.commit()
+        db.refresh(new_chat)
+        # ---------------------------------------
 
         return {
             "status": "success",
@@ -256,9 +236,23 @@ PERTANYAAN
         }
 
     except Exception as e:
-
         traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
+# ============================================================
+# AMBIL RIWAYAT CHAT (DARI POSTGRESQL)
+# ============================================================
+
+@app.get("/api/rag/history")
+async def get_chat_history(db: Session = Depends(get_db)):
+    try:
+        histories = db.query(ChatHistory).all()
+        return histories
+    except Exception as e:
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=str(e)
