@@ -1,205 +1,265 @@
 import os
-import uuid  # Untuk generate ID unik saat menyimpan dokumen ke ChromaDB
+import uuid
+import traceback
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
-# SDK baru Google Generative AI (menggantikan google-generativeai)
-from google import genai
-
-# --- IMPORT CHROMADB ---
 import chromadb
-# Documents  → tipe data list of string yang akan di-embed
-# EmbeddingFunction → base class yang harus di-inherit untuk custom embedding
-# Embeddings → tipe data hasil vektor (list of list of float)
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
+from google import genai
+
 # ============================================================
-# KONFIGURASI ENVIRONMENT & API KEY
+# LOAD ENV
 # ============================================================
 
 load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY tidak ditemukan.")
+API_KEY = os.getenv("GEMINI_API_KEY")
 
-# ============================================================
-# INISIALISASI CLIENT GEMINI
-# ============================================================
+if not API_KEY:
+    raise Exception("GEMINI_API_KEY tidak ditemukan pada file .env")
 
-# Membuat satu client yang akan dipakai untuk semua request ke Gemini
-# (generate teks maupun embedding)
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=API_KEY)
 
 # ============================================================
-# SETUP CHROMADB & CUSTOM EMBEDDING FUNCTION
+# MODEL
 # ============================================================
+
+CHAT_MODEL = "gemini-flash-latest"
+EMBEDDING_MODEL = "gemini-embedding-001"
+
+# ============================================================
+# CHROMADB EMBEDDING
+# ============================================================
+
 
 class GeminiEmbeddingFunction(EmbeddingFunction):
-    """
-    Custom embedding function yang menghubungkan ChromaDB dengan Gemini.
-    ChromaDB butuh fungsi ini untuk mengubah teks menjadi vektor angka
-    sebelum disimpan atau dicari di database.
-    """
 
     def __call__(self, input: Documents) -> Embeddings:
-        # Memanggil Gemini Embedding API untuk mengubah teks jadi vektor
-        # model "text-embedding-004" → model embedding terbaru dari Google
-        response = client.models.embed_content(
-            model="text-embedding-004", # <--- Hapus tulisan "models/"
-            contents=input
-        )
-        # Ambil nilai vektor dari setiap embedding yang dikembalikan
-        return [e.values for e in response.embeddings]
 
-# Membuat koneksi ke ChromaDB dengan mode persistent (data tersimpan ke disk)
-# path="./chroma_db" → folder penyimpanan database ada di dalam folder backend
+        embeddings = []
+
+        for text in input:
+
+            response = client.models.embed_content(
+                model=EMBEDDING_MODEL,
+                contents=text
+            )
+
+            embeddings.append(response.embeddings[0].values)
+
+        return embeddings
+
+
+# ============================================================
+# CHROMADB
+# ============================================================
+
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
-# Mengambil collection yang sudah ada, atau membuat baru jika belum ada
-# Collection di ChromaDB = seperti "tabel" di database biasa
 collection = chroma_client.get_or_create_collection(
     name="nakama_knowledge_base",
     embedding_function=GeminiEmbeddingFunction()
 )
 
 # ============================================================
-# INISIALISASI APLIKASI FASTAPI
+# FASTAPI
 # ============================================================
 
-app = FastAPI(title="Nakama AI Core System")
+app = FastAPI(
+    title="Nakama AI Backend",
+    version="1.0.0"
+)
 
-# Konfigurasi CORS agar frontend bisa mengakses API dari browser
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # Izinkan semua origin (ganti spesifik di production)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],       # Izinkan semua HTTP method
-    allow_headers=["*"],       # Izinkan semua header
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ============================================================
-# SKEMA DATA
+# REQUEST
 # ============================================================
 
-# Validasi body request untuk endpoint chat
-class ChatRequest(BaseModel):
-    message: str  # Pesan teks dari user
 
-# Validasi body request untuk endpoint ingest dokumen
+class ChatRequest(BaseModel):
+    message: str
+
+
 class IngestRequest(BaseModel):
     text: str
-    metadata: dict = {}  # Opsional — bisa diisi sumber, tanggal, dll
+    metadata: dict = {}
+
 
 # ============================================================
-# ENDPOINT: CHAT BIASA (tanpa RAG)
-# ============================================================
-
-@app.post("/api/chat")
-async def chat_with_ai(request: ChatRequest):
-    """
-    Menerima pesan user → kirim langsung ke Gemini → kembalikan respons.
-    Tidak membaca knowledge base, cocok untuk pertanyaan umum.
-    """
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=request.message
-        )
-        return {"status": "success", "ai_response": response.text}
-    except Exception as e:
-        # Tangkap semua error (quota habis, koneksi gagal, dll)
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ============================================================
-# ENDPOINT: HEALTH CHECK
+# HEALTH
 # ============================================================
 
 @app.get("/health")
-async def health_check():
-    """
-    Mengecek apakah server berjalan normal.
-    Bisa dipakai untuk monitoring atau ping awal dari frontend.
-    """
-    return {"status": "Server AI Berjalan Optimal!"}
+async def health():
+
+    return {
+        "status": "success",
+        "message": "Backend berjalan."
+    }
+
 
 # ============================================================
-# ENDPOINT: INGEST DOKUMEN KE KNOWLEDGE BASE (RAG)
+# LIST MODEL
+# ============================================================
+
+@app.get("/models")
+async def models():
+
+    try:
+
+        result = []
+
+        for model in client.models.list():
+            result.append(model.name)
+
+        return result
+
+    except Exception as e:
+
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+# ============================================================
+# CHAT BIASA
+# ============================================================
+
+@app.post("/api/chat")
+async def chat(request: ChatRequest):
+
+    try:
+
+        response = client.models.generate_content(
+            model=CHAT_MODEL,
+            contents=request.message
+        )
+
+        return {
+            "status": "success",
+            "response": response.text
+        }
+
+    except Exception as e:
+
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+# ============================================================
+# INGEST DOKUMEN
 # ============================================================
 
 @app.post("/api/rag/ingest")
-async def ingest_document(request: IngestRequest):
-    """
-    Menyimpan teks ke ChromaDB sebagai bagian dari knowledge base.
-    Teks akan otomatis diubah menjadi vektor oleh GeminiEmbeddingFunction.
-    """
+async def ingest(request: IngestRequest):
+
     try:
-        # Membuat ID unik untuk setiap dokumen agar tidak tabrakan
+
         doc_id = str(uuid.uuid4())
 
-        # Memasukkan teks ke dalam ChromaDB
         collection.add(
+            ids=[doc_id],
             documents=[request.text],
-            metadatas=[request.metadata],
-            ids=[doc_id]
+            metadatas=[request.metadata]
         )
+
         return {
             "status": "success",
-            "message": "Dokumen berhasil disimpan ke Knowledge Base",
+            "message": "Dokumen berhasil disimpan.",
             "doc_id": doc_id
         }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
 
 # ============================================================
-# ENDPOINT: CHAT RAG (Baca knowledge base dulu, baru jawab)
+# CHAT RAG
 # ============================================================
 
 @app.post("/api/rag/chat")
-async def chat_with_rag(request: ChatRequest):
-    """
-    Alur RAG (Retrieval-Augmented Generation):
-    1. Cari dokumen relevan di ChromaDB
-    2. Gabungkan sebagai konteks
-    3. Kirim ke Gemini bersama pertanyaan user
-    4. Kembalikan jawaban yang berbasis dokumen internal
-    """
+async def rag_chat(request: ChatRequest):
+
     try:
-        # 1. Mencari dokumen paling relevan di ChromaDB (Top 2 hasil)
+
         results = collection.query(
             query_texts=[request.message],
-            n_results=2
+            n_results=3
         )
 
-        # 2. Menggabungkan dokumen yang ditemukan menjadi satu konteks teks
-        retrieved_docs = results['documents'][0]
-        context = "\n\n".join(retrieved_docs) if retrieved_docs else "Tidak ada dokumen relevan."
+        documents = results.get("documents", [])
 
-        # 3. Merakit Prompt (Instruksi sistem + Konteks + Pertanyaan User)
+        if len(documents) == 0 or len(documents[0]) == 0:
+
+            context = "Tidak ada dokumen relevan."
+
+        else:
+
+            context = "\n\n".join(documents[0])
+
         prompt = f"""
-        Kamu adalah Asisten AI Internal Nakama Creative Lab. 
-        Jawablah pertanyaan berikut HANYA berdasarkan konteks yang diberikan. 
-        Jika jawaban tidak ada di dalam konteks, bilang saja "Saya tidak menemukan informasi tersebut di dokumen internal".
+Kamu adalah AI Assistant milik Nakama Creative Lab.
 
-        KONTEKS DOKUMEN:
-        {context}
+Jawab pertanyaan hanya berdasarkan konteks berikut.
 
-        PERTANYAAN:
-        {request.message}
-        """
+Jika jawaban tidak ada pada konteks maka jawab:
 
-        # 4. Meminta Gemini menjawab berdasarkan Prompt yang sudah diperkaya konteks
+"Saya tidak menemukan informasi tersebut pada knowledge base."
+
+================================
+
+KONTEKS
+
+{context}
+
+================================
+
+PERTANYAAN
+
+{request.message}
+"""
+
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=CHAT_MODEL,
             contents=prompt
         )
 
         return {
             "status": "success",
-            "ai_response": response.text,
-            "retrieved_context": context  # Ditampilkan agar kita tahu apa yang dibaca AI
+            "response": response.text,
+            "context": context
         }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
