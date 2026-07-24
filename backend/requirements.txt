@@ -6,4 +6,8 @@ pydantic==2.6.3         # Library validasi data berbasis type hint Python — Fa
 python-multipart==0.0.9 # Parsing form data & file upload di FastAPI — wajib ada kalau endpoint kamu nerima multipart/form-data (misal upload file/gambar)
 chromadb==1.5.9 # Kita butuh library khusus untuk menyimpan teks menjadi angka (vektor) agar AI bisa mencari dokumen yang relevan dengan cepat.
 sqlalchemy        # ORM untuk interaksi dengan database (PostgreSQL, dll)
-psycopg2-binary   # Driver PostgreSQL untuk Python — versi binary tidak butuh kompilasi C
+psycopg2-binary   # Driver PostgreSQL untuk Python — versi binary tidak butuh kompilasi 
+langchain
+langchain-community
+langchain-text-splitters
+langchain-google-genai

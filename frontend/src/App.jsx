@@ -6,7 +6,12 @@ import ChatInput from './components/ChatInput';
 import { Sparkles } from 'lucide-react';
 
 function App() {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState([
+  { 
+    sender: 'ai', 
+    text: 'Halo! Saya adalah Nakama AI. Asisten andalan yang siap membantu pekerjaan tim Nakama hari ini. Ada yang ingin dicari atau didiskusikan?' 
+  }
+]);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSendMessage = async (text) => {

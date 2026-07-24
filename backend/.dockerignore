@@ -1,11 +1,24 @@
+# Git & Docker files
+.git
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Environments
+.env
+venv/
+env/
+
+# Backend Caches
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.env
+
+# Frontend Dependencies
+node_modules/
+build/
+dist/
+
+# Database files (biar Docker nggak ngopi database lokal)
 chroma_db/
-.git/
-.gitignore
+data/

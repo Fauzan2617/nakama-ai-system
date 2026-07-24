@@ -1,22 +1,37 @@
-# Mengabaikan Environment
-env/
-venv/
-ENV/
-
-# Mengabaikan Kredensial & Variabel Lokal
+# ========================
+# Kredensial & Rahasia (SANGAT PENTING)
+# ========================
 .env
-.env.local
-.env.*.local
 
-# Mengabaikan File Cache Python
+# ========================
+# Backend (Python / FastAPI)
+# ========================
 __pycache__/
 *.py[cod]
 *$py.class
+venv/
+env/
+.pytest_cache/
 
-# Mengabaikan Folder Database Lokal
-*.db
-*.sqlite3
+# ========================
+# Database & Knowledge Base
+# ========================
 chroma_db/
+data/
 
-# MacOS junk files (Opsional tapi berguna)
+# ========================
+# Frontend (React / JS)
+# ========================
+node_modules/
+build/
+dist/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ========================
+# OS / System Files
+# ========================
 .DS_Store
+Thumbs.db
